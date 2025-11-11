@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Exámenes por temas (PWA)</title>
+    <meta name="theme-color" content="#111827" />
+    <link rel="manifest" href="manifest.webmanifest">
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React 18 + ReactDOM 18 -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  </head>
+
+  <body class="bg-gray-50">
+    <noscript>Necesitas habilitar JavaScript para usar esta aplicación.</noscript>
+    <div id="root"></div>
+
+    <script>
+      // Registra el service worker (necesario para instalación/offline)
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('./sw.js').catch(console.error);
+        });
+      }
+    </script>
+
+    <script type="text/javascript">
+      const { useState, useEffect, useMemo } = React;
+
+      const LS_BANK = "quiz.topics.bank.v2";
+      const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+      const shuffle = (arr) => arr.map((x) => [Math.random(), x]).sort((a,b)=>a[0]-b[0]).map(([,x])=>x);
+
+      const sampleBank = () => ({
+        temas: [
+          {
+            id: uid(),
+            nombre: "Constitución (genérico)",
+            preguntas: [
+              {
+                id: uid(),
+                enunciado: "¿Qué principio impide que los poderes públicos actúen de forma caprichosa?",
+                opciones: [
+                  { id: uid(), texto: "Jerarquía normativa", correcta: false },
+                  { id: uid(), texto: "Interdicción de la arbitrariedad", correcta: true },
+                  { id: uid(), texto: "Publicidad de las normas", correcta: false },
+                  { id: uid(), texto: "Irretroactividad favorable", correcta: false },
+                ],
+                explicacion: "La Constitución garantiza la interdicción de la arbitrariedad de los poderes públicos.",
+              },
+              {
+                id: uid(),
+                enunciado: "¿Cuál es la forma política del Estado español?",
+                opciones: [
+                  { id: uid(), texto: "República parlamentaria", correcta: false },
+                  { id: uid(), texto: "Monarquía parlamentaria", correcta: true },
+                  { id: uid(), texto: "Monarquía absoluta", correcta: false },
+                  { id: uid(), texto: "República federal", correcta: false },
+                ],
+                explicacion: "La Constitución establece la Monarquía parlamentaria como forma política del Estado.",
+              },
+            ],
+          },
+        ],
+      });
+
+      const save = (k, v) => localStorage.setItem(k, JSON.stringify(v));
+      const load = (k, fb) => {
+        try { const raw = localStorage.getItem(k); return raw ? JSON.parse(raw) : fb; }
+        catch { return fb; }
+      };
+
+      function useBanco() {
+        const [banco, setBanco] = useState(() => load(LS_BANK, sampleBank()));
+        useEffect(() => save(LS_BANK, banco), [banco]);
+        return { banco, setBanco };
+      }
+
+      function Progress({ value = 0 }) {
+        return React.createElement("div", { className: "w-24 h-2 bg-gray-200 rounded-full overflow-hidden" },
+          React.createElement("div", { className: "h-full bg-gray-900 transition-all", style: { width: `${Math.max(0, Math.min(100, value))}%` } })
+        );
+      }
+
+      function Button({ children, ...props }) {
+        return React.createElement("button", { ...props, className: "px-4 py-2 rounded-2xl bg-gray-900 text-white shadow hover:shadow-md active:scale-[0.98]" }, children);
+      }
+
+      function App() {
+        const bancoAPI = useBanco();
+        const [temaId, setTemaId] = useState(bancoAPI.banco.temas[0]?.id || "");
+        const [numQ, setNumQ] = useState(5);
+        const [seed, setSeed] = useState(0);
+        const tema = bancoAPI.banco.temas.find((t) => t.id === temaId) || bancoAPI.banco.temas[0];
+
+        return React.createElement("div", { className: "max-w-5xl mx-auto p-6" },
+          React.createElement("h1", { className: "text-3xl font-bold mb-6" }, "Exámenes por temas (PWA)"),
+          React.createElement(VistaExamen, { key: seed, banco: bancoAPI.banco, tema, temaId, setTemaId, numQ, setNumQ, onRepeatSame: () => setSeed((s) => s + 1) })
+        );
+      }
+
+      function VistaExamen({ banco, tema, temaId, setTemaId, numQ, setNumQ, onRepeatSame }) {
+        const basePregs = useMemo(() => (tema?.preguntas || []).filter((p) => p.opciones?.some((o) => o.correcta)), [tema]);
+        const total = tema.preguntas.length;
+        const validas = tema.preguntas.filter((p) => p.enunciado?.trim() && p.opciones?.length >= 2 && p.opciones.some((o) => o.correcta)).length;
+        const pct = total ? Math.round((validas / total) * 100) : 100;
+
+        const [preguntas] = useState(() => {
+          const pool = shuffle([...basePregs]);
+          return pool.slice(0, Math.min(numQ, pool.length));
+        });
+        const [marcadas, setMarcadas] = useState({});
+        const [corregido, setCorregido] = useState(false);
+
+        const correctas = preguntas.filter((p) => marcadas[p.id] && p.opciones.find((o) => o.id === marcadas[p.id])?.correcta).length;
+        const score = preguntas.length ? Math.round((correctas / preguntas.length) * 100) : 0;
+
+        return React.createElement("div", { className: "bg-white border rounded-2xl shadow p-6" },
+          React.createElement("div", { className: "flex flex-wrap items-center justify-between gap-4 mb-6" },
+            React.createElement("div", { className: "flex gap-2" },
+              React.createElement("select", { className: "px-3 py-2 border rounded-xl", value: temaId, onChange: (e) => setTemaId(e.target.value) },
+                banco.temas.map((t) => React.createElement("option", { key: t.id, value: t.id }, t.nombre))),
+              React.createElement("input", { type: "number", min: 1, max: basePregs.length || 1, className: "w-24 px-3 py-2 border rounded-xl",
+                value: numQ, onChange: (e) => setNumQ(Math.max(1, Math.min(basePregs.length || 1, Number(e.target.value) || 1))) })
+            ),
+            React.createElement("div", { className: "flex items-center gap-2 text-sm text-gray-600" },
+              React.createElement("span", null, "% de creación del tema:"),
+              React.createElement("span", { className: "font-semibold" }, `${pct}% (${validas}/${total})`),
+              React.createElement(Progress, { value: pct })
+            )
+          ),
+          React.createElement("div", { className: "space-y-4" },
+            preguntas.map((p, i) =>
+              React.createElement("div", { key: p.id, className: "border rounded-xl p-3" },
+                React.createElement("div", { className: "font-medium mb-2" }, `${i + 1}. ${p.enunciado}`),
+                p.opciones.map((o) =>
+                  React.createElement("label", { key: o.id, className: "flex items-center gap-2" },
+                    React.createElement("input", { type: "radio", name: `q-${p.id}`, checked: marcadas[p.id] === o.id, onChange: () => setMarcadas((m) => ({ ...m, [p.id]: o.id })) }),
+                    o.texto
+                  )
+                )
+              )
+            )
+          ),
+          !corregido
+            ? React.createElement("div", { className: "mt-6" }, React.createElement(Button, { onClick: () => setCorregido(true) }, "Corregir"))
+            : React.createElement("div", { className: "mt-6" },
+                React.createElement("p", null, `Resultado: ${score}% (${correctas}/${preguntas.length})`),
+                React.createElement(Button, { onClick: onRepeatSame }, "Repetir"))
+        );
+      }
+
+      ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
+    </script>
+  </body>
+</html>
